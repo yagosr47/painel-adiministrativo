@@ -230,6 +230,8 @@ propria, substituir arquivo, excluir, definir capa do segmento, definir
 capa/miniatura do site e do template, e **aplicar as imagens do segmento em um
 template** de uma vez.
 
+![Amostra da biblioteca de imagens](docs/biblioteca-ilustracoes.png)
+
 ### Como as ilustracoes sao desenhadas
 
 `server/lib/imagery.js` traduz o titulo da imagem em um **assunto** (pizza,
