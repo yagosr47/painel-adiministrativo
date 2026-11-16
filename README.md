@@ -23,6 +23,7 @@ do site.
 - [Permissoes e seguranca](#permissoes-e-seguranca)
 - [API](#api)
 - [Testes](#testes)
+- [Deploy](#deploy)
 - [Decisoes e limites](#decisoes-e-limites)
 
 ---
@@ -353,6 +354,76 @@ marca de imagens ilustrativas, tolerancia a imagem ausente e **escape de HTML**
 (conteudo nao injeta `<script>`).
 
 ---
+
+## Deploy
+
+### Opcao recomendada: host com disco (Node)
+
+O painel guarda dados em SQLite (`DB_PATH`, padrao `data/panel.db`) e arquivos em
+`data/media/`. Isso exige um filesystem persistente, entao o modo correto de
+producao e um host Node com volume:
+
+```bash
+npm ci
+npm run seed                       # apenas na primeira vez
+npm start                          # build + API + UI na mesma porta (PORT, padrao 4000)
+```
+
+Variaveis de ambiente uteis:
+
+| Variavel | Para que serve |
+| --- | --- |
+| `PORT` | Porta HTTP (a maioria dos hosts injeta automaticamente). |
+| `DATA_DIR` | Diretorio de dados (`panel.db` + `media/`). Aponte para o volume. |
+| `DB_PATH` | Caminho completo do banco; tem prioridade sobre `DATA_DIR`. |
+| `PANEL_ADMIN_EMAIL` / `PANEL_ADMIN_PASSWORD` | Credenciais do admin criado pelo seed. |
+
+Provedores compativeis: Railway/Render/Fly.io com volume montado, VPS com Docker
+ou systemd. Use `GET /api/health` como healthcheck (responde
+`{ ok: true, ui: "build" }`). O app confia no primeiro proxy
+(`trust proxy`), entao o cookie de sessao sai `Secure` corretamente quando o
+TLS termina no balanceador.
+
+### Opcao de demonstracao: Vercel (serverless)
+
+O repositorio inclui `vercel.json` + `api/index.js` para o painel subir na Vercel.
+Nesse modo a interface (`dist/`) e servida como estatico e a API roda em uma
+funcao serverless que reaproveita o mesmo Express.
+
+```bash
+npm i -g vercel
+vercel            # preview
+vercel --prod     # producao
+```
+
+O que o modo serverless faz por voce:
+
+- `api/_env.js` redireciona os dados para `/tmp/painel-data` (unico caminho
+  gravavel) antes de o banco ser aberto;
+- `api/index.js` popula o banco automaticamente quando nao existe usuario
+  (`PANEL_AUTO_SEED=false` desativa);
+- o handler reconstroi a URL original, aceitando as tres formas que os rewrites
+  entregam (`/api/dashboard`, `/api/index?__path=/api/dashboard` e
+  `/api/index/dashboard`), coberto por `server/tests/serverless.test.js`.
+
+**Limite importante:** em serverless o disco e efemero. Os dados (clientes,
+sites, imagens enviadas) nao sobrevivem a uma nova instancia e cada instancia
+tem o proprio banco. Use a Vercel para demonstrar, nao para operar.
+
+### Erros comuns de deploy
+
+| Sintoma | Causa | Correcao |
+| --- | --- | --- |
+| `The page could not be found` (pagina da plataforma, sem o layout do painel) | O projeto foi tratado como site estatico e o Express nunca executou. | Garanta `vercel.json` na raiz; faca o deploy pela raiz do repositorio. |
+| Login responde 404 | A interface esta no ar, mas a API nao esta no mesmo dominio. | Use `npm start` (uma porta so) ou aponte o front para a URL da API. |
+| O painel entra e volta para o login | Cookie de sessao bloqueado no contexto (iframe / terceiros). | O login ja devolve um token e o painel usa `Authorization: Bearer` como fallback; o aviso na tela so aparece quando o servidor confirma `cookieAuth: false`. |
+| `dados somem` depois de um tempo | Filesystem efemero (serverless). | Migre para um host com volume persistente. |
+| `SQLITE_CANTOPEN` / banco somente leitura | `DATA_DIR`/`DB_PATH` fora de um caminho gravavel. | Aponte para o volume montado. |
+
+### CI
+
+`.github/workflows/ci.yml` roda em cada push/PR: `npm ci` -> `npm run build`
+(typecheck + Vite) -> `npm test` (70 testes) em Node 22.
 
 ## Decisoes e limites
 
