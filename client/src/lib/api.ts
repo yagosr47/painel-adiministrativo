@@ -52,7 +52,14 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
     options.body = JSON.stringify(body);
   }
 
-  const response = await fetch(url, options);
+  let response: Response;
+  try {
+    response = await fetch(url, options);
+  } catch {
+    // Sem resposta (DNS, offline, porta errada, iframe bloqueado): status 0
+    // permite a UI distinguir "servidor fora do ar" de "credencial recusada".
+    throw new ApiError(0, 'Servidor indisponivel. Verifique se a API esta no ar.', null);
+  }
   const text = await response.text();
   const data = text ? safeJson(text) : null;
 

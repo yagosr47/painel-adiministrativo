@@ -2,27 +2,32 @@ import React, { useState } from 'react';
 import { api, tokenStore } from '../lib/api';
 import type { User } from '../types';
 import { Field } from '../components/ui';
+import { classifyLoginError, COOKIE_NOTICE, type LoginIssue } from '../lib/login-errors';
 
 export function LoginScreen({ onLogin, needsSetup }: { onLogin: (user: User) => void; needsSetup: boolean }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const [issue, setIssue] = useState<LoginIssue | null>(null);
   const [loading, setLoading] = useState(false);
-  const [loginCount, setLoginCount] = useState(0);
+  const [cookiesBlocked, setCookiesBlocked] = useState(false);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    setError(null);
+    setIssue(null);
     try {
       const res = await api.post<{ user: User; token: string }>('/api/auth/login', { email, password });
       // guarda o token como alternativa ao cookie httpOnly: cobre navegadores
       // que bloqueiam cookies de terceiros dentro do preview/iframe.
       if (res.token) tokenStore.set(res.token);
+      // Confirma se o cookie realmente ficou gravado; so entao avisamos o usuario.
+      const check = await api
+        .get<{ cookieAuth?: boolean }>('/api/auth/session')
+        .catch(() => null);
+      setCookiesBlocked(check ? check.cookieAuth === false : false);
       onLogin(res.user);
     } catch (err: any) {
-      setError(err.message ?? 'Falha ao entrar');
-      setLoginCount((n) => n + 1);
+      setIssue(classifyLoginError(err));
     } finally {
       setLoading(false);
     }
@@ -44,7 +49,13 @@ export function LoginScreen({ onLogin, needsSetup }: { onLogin: (user: User) => 
           cada estabelecimento.
         </p>
 
-        {error ? <div className="banner danger">{error}</div> : null}
+        {issue ? <IssueBanner issue={issue} /> : null}
+        {cookiesBlocked ? (
+          <div className="banner info">
+            <span>ℹ</span>
+            <span>{COOKIE_NOTICE}</span>
+          </div>
+        ) : null}
 
         <Field label="E-mail">
           <input
@@ -74,16 +85,6 @@ export function LoginScreen({ onLogin, needsSetup }: { onLogin: (user: User) => 
           Entrar
         </button>
 
-        {loginCount > 0 ? (
-          <div className="banner warn">
-            <span>⚠</span>
-            <span>
-              Seu navegador parece bloquear cookies. O login pelo token ja foi ativado automaticamente; se voltar
-              para esta tela, abra o painel em uma aba propria (fora do preview) ou permita cookies para este site.
-            </span>
-          </div>
-        ) : null}
-
         {needsSetup ? (
           <div className="banner warn">
             <span>⚠</span>
@@ -98,6 +99,25 @@ export function LoginScreen({ onLogin, needsSetup }: { onLogin: (user: User) => 
           </div>
         )}
       </form>
+    </div>
+  );
+}
+
+function IssueBanner({ issue }: { issue: LoginIssue }) {
+  const tone = issue.kind === 'invalid-credentials' ? 'danger' : issue.kind === 'server' ? 'danger' : 'warn';
+  const icon = issue.kind === 'invalid-credentials' ? '✕' : '⚠';
+  return (
+    <div className={`banner ${tone}`}>
+      <span>{icon}</span>
+      <span>
+        <strong>{issue.message}</strong>
+        {issue.detail ? (
+          <>
+            <br />
+            <span className="small">{issue.detail}</span>
+          </>
+        ) : null}
+      </span>
     </div>
   );
 }

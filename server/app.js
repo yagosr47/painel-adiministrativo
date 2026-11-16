@@ -17,6 +17,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = path.resolve(__dirname, '..');
 export const app = express();
 app.disable('x-powered-by');
+// Atras de proxy reverso (Render, Railway, Nginx, Vercel) o TLS termina antes
+// do app: sem isso req.secure e sempre false e o cookie nunca sai Secure.
+app.set('trust proxy', 1);
 app.use(express.json({ limit: '4mb' }));
 
 /**
