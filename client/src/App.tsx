@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { api } from './lib/api';
+import { api, tokenStore } from './lib/api';
 import type { User } from './types';
 import { useRoute, navigate } from './lib/router';
 import { LoginScreen } from './pages/LoginScreen';
@@ -41,6 +41,7 @@ export function App() {
 
   const logout = async () => {
     await api.post('/api/auth/logout').catch(() => {});
+    tokenStore.set(null);
     setUser(null);
     navigate('');
   };

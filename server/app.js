@@ -19,10 +19,17 @@ export const app = express();
 app.disable('x-powered-by');
 app.use(express.json({ limit: '4mb' }));
 
-/* Sessao: popula req.user a partir do cookie httpOnly. */
+/**
+ * Sessao: cookie httpOnly e o caminho principal. O token tambem pode vir no
+ * header `Authorization: Bearer <token>`, o que mantem o login funcional quando
+ * o navegador bloqueia cookies de terceiros (ex.: preview dentro de iframe).
+ */
 app.use((req, _res, next) => {
   try {
-    const token = parseCookies(req.headers.cookie)[SESSION_COOKIE];
+    const header = String(req.headers.authorization ?? '');
+    const bearer = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+    const token = bearer || parseCookies(req.headers.cookie)[SESSION_COOKIE];
+    req.sessionToken = token || null;
     req.user = userFromToken(token) ?? null;
   } catch {
     req.user = null;
@@ -30,9 +37,16 @@ app.use((req, _res, next) => {
   next();
 });
 
+/* Diagnostico rapido: qual origem/porta esta servindo o painel. */
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, service: 'painel-administrativo', time: new Date().toISOString() });
+  res.json({
+    ok: true,
+    service: 'painel-administrativo',
+    ui: existsSync(path.join(APP_ROOT, 'dist', 'index.html')) ? 'build' : 'dev-vite',
+    time: new Date().toISOString(),
+  });
 });
+
 
 app.use('/api/auth', authRouter());
 
@@ -75,14 +89,41 @@ app.use('/api', imagesRouter());
 app.use('/api', clientsRouter());
 app.use('/api', usersRouter());
 
-/* Build de producao do painel (se existir). */
+/*
+ * Painel servido pela API.
+ *
+ * A decisao e tomada por requisicao (nao no boot): assim `npm start` (build +
+ * servidor) e `npm run dev` (Vite separado) funcionam sem depender da ordem em
+ * que dist/ apareceu. Havendo build, a interface fica na MESMA origem da API.
+ */
 const distDir = path.join(APP_ROOT, 'dist');
-if (existsSync(distDir)) {
-  app.use(express.static(distDir, { index: false }));
-  app.get(/^(?!\/api|\/media).*/, (_req, res) => {
-    res.sendFile(path.join(distDir, 'index.html'));
-  });
-}
+const distIndex = path.join(distDir, 'index.html');
+const hasBuild = () => existsSync(distIndex);
+
+app.use((req, res, next) => {
+  if (!hasBuild()) return next();
+  if (req.path.startsWith('/api') || req.path.startsWith('/media')) return next();
+  express.static(distDir, { index: false })(req, res, next);
+});
+
+/* Fallback de SPA + aviso quando a interface ainda nao foi compilada. */
+app.use((req, res, next) => {
+  if (req.method !== 'GET') return next();
+  if (req.path.startsWith('/api') || req.path.startsWith('/media')) return next();
+  if (hasBuild()) return res.sendFile(distIndex);
+  res
+    .status(503)
+    .type('html')
+    .send(
+      `<!doctype html><html lang="pt-BR"><meta charset="utf-8"><title>Painel indisponivel</title>
+       <body style="font-family:system-ui;padding:40px;max-width:640px;margin:0 auto;line-height:1.6">
+       <h1 style="font-size:20px">Interface nao compilada</h1>
+       <p>A API esta no ar, mas o painel ainda nao foi buildado nesta porta.</p>
+       <p><strong>Desenvolvimento:</strong> rode <code>npm run dev</code> e acesse a porta do Vite (5173).<br>
+          <strong>Producao:</strong> rode <code>npm start</code> (compila o painel e sobe API + UI juntas).</p>
+       <p style="color:#666">Diagnostico: <a href="/api/health">/api/health</a></p></body></html>`,
+    );
+});
 
 /* Handler de erros central. */
 app.use((error, _req, res, _next) => {

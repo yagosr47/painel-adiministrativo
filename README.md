@@ -34,10 +34,16 @@ Requisitos: **Node.js 22.5+** (usa `node:sqlite`, sem dependencias nativas).
 ```bash
 npm install
 npm run seed      # cria usuario admin, segmentos, templates, imagens e 3 clientes de exemplo
-npm run dev       # API (4000) + painel (5173)
+npm run dev       # Vite com hot reload (5173) + API (4000)
 ```
 
 Acesse **http://localhost:5173**.
+
+Para ver o painel **exatamente como em producao**, em uma porta unica:
+
+```bash
+npm start         # compila o painel e sobe API + UI juntas em http://localhost:4000
+```
 
 Credenciais criadas pelo seed (configuraveis por variavel de ambiente):
 
@@ -54,8 +60,27 @@ Outros comandos:
 ```bash
 npm test          # suite completa (API, isolamento, SSR do renderizador)
 npm run build     # typecheck + build do painel em dist/
-npm start         # serve API + painel compilado na porta 4000
+npm start         # build + API + painel na mesma porta (4000)
+npm run serve     # sobe o servidor sem rebuildar (usa dist/ existente)
 ```
+
+### Login
+
+| Campo | Valor padrao |
+| --- | --- |
+| E-mail | `admin@painel.local` |
+| Senha | `admin123` |
+
+A sessao e mantida de duas formas, aceitas pelo servidor:
+
+1. **cookie httpOnly** `panel_session` (caminho normal);
+2. **token** devolvido no login e enviado como `Authorization: Bearer …` — usado
+   automaticamente quando o navegador descarta cookies de terceiros (ex.: painel
+   aberto dentro de iframe/preview). Se a UI voltar para a tela de login, abra em
+   uma aba propria.
+
+Sem `npm run seed` **nao existe usuario** e o login sempre falha. Para redefinir a
+senha do administrador, veja a secao de diagnostico abaixo.
 
 Variaveis de ambiente: `PORT`, `DATA_DIR` (padrao `data/`), `DB_PATH`.
 
@@ -289,8 +314,12 @@ GET    /api/users                                POST /api/users
 PATCH  /api/users/:id
 
 GET    /api/public/sites/:slug[?preview=1]       (preview exige sessao)
+GET    /api/health                               (diagnostico: ui build/dev)
 GET    /media/:arquivo
 ```
+
+Autenticacao: cookie `panel_session` **ou** `Authorization: Bearer <token>`
+(o login devolve `token` no corpo).
 
 ---
 
