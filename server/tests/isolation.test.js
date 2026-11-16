@@ -112,6 +112,51 @@ describe('autenticacao e permissoes', () => {
     assert.equal(session.body.user.email, 'admin@painel.local');
   });
 
+  test('login devolve token e o token funciona sem cookie (iframe/cookies bloqueados)', async () => {
+    await asAdmin();
+    const res = await request('POST', '/api/auth/login', {
+      email: 'admin@painel.local',
+      password: 'admin123',
+    });
+    assert.equal(res.status, 200);
+    assert.ok(res.body.token, 'login deve devolver token alem do cookie');
+
+    // sem cookie, somente com Authorization: Bearer
+    const session = await fetch(`${base}/api/auth/session`, {
+      headers: { Authorization: `Bearer ${res.body.token}` },
+    }).then((r) => r.json());
+    assert.equal(session.user.email, 'admin@painel.local');
+
+    const dashboard = await fetch(`${base}/api/dashboard`, {
+      headers: { Authorization: `Bearer ${res.body.token}` },
+    });
+    assert.equal(dashboard.status, 200);
+  });
+
+  test('token invalido nao autentica', async () => {
+    const res = await fetch(`${base}/api/dashboard`, {
+      headers: { Authorization: 'Bearer token-falso' },
+    });
+    assert.equal(res.status, 401);
+  });
+
+  test('logout invalida o token usado', async () => {
+    const login = await request('POST', '/api/auth/login', {
+      email: 'admin@painel.local',
+      password: 'admin123',
+    });
+    const token = login.body.token;
+    const out = await fetch(`${base}/api/auth/logout`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.equal(out.status, 200);
+    const after = await fetch(`${base}/api/auth/session`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }).then((r) => r.json());
+    assert.equal(after.user, null);
+  });
+
   test('senha nunca e exposta nas respostas', async () => {
     await asAdmin();
     const res = await request('GET', '/api/users');

@@ -8,7 +8,7 @@ export function authRouter() {
   const router = Router();
 
   router.get('/session', (req, res) => {
-    res.json({ user: req.user, needsSetup: countUsers() === 0 });
+    res.json({ user: req.user, needsSetup: countUsers() === 0, cookieAuth: Boolean(req.sessionToken && !req.headers.authorization) });
   });
 
   router.post('/login', (req, res) => {
@@ -25,12 +25,13 @@ export function authRouter() {
       path: '/',
     });
     logActivity(user, 'auth.login', 'user', user.id, 'Login realizado');
-    res.json({ user });
+    // O token tambem volta no corpo para o cliente poder usa-lo via header
+    // quando o cookie for descartado (iframe / cookies de terceiros).
+    res.json({ user, token: session.token, expires_at: session.expires_at });
   });
 
   router.post('/logout', (req, res) => {
-    const token = parseCookies(req.headers.cookie)[SESSION_COOKIE];
-    destroySession(token);
+    destroySession(req.sessionToken || parseCookies(req.headers.cookie)[SESSION_COOKIE]);
     res.clearCookie(SESSION_COOKIE, { path: '/' });
     res.json({ ok: true });
   });

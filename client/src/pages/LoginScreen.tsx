@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { api } from '../lib/api';
+import { api, tokenStore } from '../lib/api';
 import type { User } from '../types';
 import { Field } from '../components/ui';
 
@@ -8,16 +8,21 @@ export function LoginScreen({ onLogin, needsSetup }: { onLogin: (user: User) => 
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loginCount, setLoginCount] = useState(0);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
     try {
-      const res = await api.post<{ user: User }>('/api/auth/login', { email, password });
+      const res = await api.post<{ user: User; token: string }>('/api/auth/login', { email, password });
+      // guarda o token como alternativa ao cookie httpOnly: cobre navegadores
+      // que bloqueiam cookies de terceiros dentro do preview/iframe.
+      if (res.token) tokenStore.set(res.token);
       onLogin(res.user);
     } catch (err: any) {
       setError(err.message ?? 'Falha ao entrar');
+      setLoginCount((n) => n + 1);
     } finally {
       setLoading(false);
     }
@@ -68,6 +73,16 @@ export function LoginScreen({ onLogin, needsSetup }: { onLogin: (user: User) => 
           {loading ? <span className="spin" /> : null}
           Entrar
         </button>
+
+        {loginCount > 0 ? (
+          <div className="banner warn">
+            <span>⚠</span>
+            <span>
+              Seu navegador parece bloquear cookies. O login pelo token ja foi ativado automaticamente; se voltar
+              para esta tela, abra o painel em uma aba propria (fora do preview) ou permita cookies para este site.
+            </span>
+          </div>
+        ) : null}
 
         {needsSetup ? (
           <div className="banner warn">
