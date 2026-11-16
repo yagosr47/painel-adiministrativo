@@ -3,7 +3,7 @@ import path from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { getDb, get, MEDIA_DIR } from './db/index.js';
-import { userFromToken, parseCookies, SESSION_COOKIE } from './lib/session.js';
+import { parseCookies, SESSION_COOKIE, resolveSession } from './lib/session.js';
 import { HttpError, notFound } from './lib/http.js';
 import { mimeForExt } from './lib/storage.js';
 import { authRouter, requireAuth } from './routes/auth.js';
@@ -27,20 +27,91 @@ app.use(express.json({ limit: '4mb' }));
  * header `Authorization: Bearer <token>`, o que mantem o login funcional quando
  * o navegador bloqueia cookies de terceiros (ex.: preview dentro de iframe).
  */
-app.use((req, _res, next) => {
+app.use((req, res, next) => {
   try {
     const header = String(req.headers.authorization ?? '');
     const bearer = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
-    const token = bearer || parseCookies(req.headers.cookie)[SESSION_COOKIE];
-    req.sessionToken = token || null;
-    req.user = userFromToken(token) ?? null;
+    const cookies = parseCookies(req.headers.cookie);
+    const resolved = resolveSession({ bearer, cookie: cookies[SESSION_COOKIE] });
+    req.sessionToken = resolved.token;
+    req.user = resolved.user;
+    req.sessionSource = resolved.source;
+
+    // O cliente precisa saber que o token dele morreu para nao reenviar um
+    // Bearer invalido em toda requisicao (e para cair no cookie, se houver).
+    if (resolved.staleBearer) res.setHeader('X-Session-Stale', 'bearer');
+    if (resolved.staleCookie) res.setHeader('X-Session-Stale', 'cookie');
   } catch {
     req.user = null;
   }
   next();
 });
 
-/* Diagnostico rapido: qual origem/porta esta servindo o painel. */
+/**
+ * Preflight CORS. O painel e a API normalmente sao a mesma origem, mas em
+ * hospedagem separada (UI estatica + API em outro dominio) o navegador manda
+ * OPTIONS antes de qualquer requisicao com Authorization. Sem responder aqui, o
+ * preflight caia no requireAuth e voltava 401, o que o navegador reporta como
+ * falha de rede no login.
+ *
+ * Seguranca: nao liberamos origem arbitraria. Mesma origem sempre passa; outras
+ * origens so quando listadas em PANEL_ALLOWED_ORIGINS (separadas por virgula).
+ * Um preflight negado recebe 204 sem os cabecalhos de liberacao — o navegador
+ * bloqueia sozinho, sem que a API exponha dados.
+ */
+function allowedOrigins() {
+  return String(process.env.PANEL_ALLOWED_ORIGINS ?? '')
+    .split(',')
+    .map((item) => item.trim().replace(/\/+$/, ''))
+    .filter(Boolean);
+}
+
+function hostnameOf(value) {
+  try {
+    return new URL(value).hostname;
+  } catch {
+    return String(value ?? '').split(':')[0];
+  }
+}
+
+function isSameOrigin(req) {
+  const origin = String(req.headers.origin ?? '');
+  if (!origin) return true;
+
+  const originHost = hostnameOf(origin);
+  const requestHost = hostnameOf(String(req.headers.host ?? ''));
+  const forwardedHost = hostnameOf(String(req.headers['x-forwarded-host'] ?? ''));
+
+  // O proxy do preview reescreve porta e esquema (a requisicao chega como
+  // localhost:4000, mas o navegador fala https://4000-<sandbox>.e2b.app). Por
+  // isso comparamos somente o HOSTNAME — a porta muda no caminho e nao e um
+  // limite de seguranca relevante aqui (o cookie nao depende dela).
+  if (!originHost) return false;
+  if (originHost === requestHost || (forwardedHost && originHost === forwardedHost)) return true;
+
+  // Hostnames do mesmo site (app.exemplo.com x preview.exemplo.com) nao passam
+  // automaticamente: so a lista explicita libera.
+  return allowedOrigins().some((item) => hostnameOf(item) === originHost);
+}
+
+app.use((req, res, next) => {
+  if (req.method !== 'OPTIONS') return next();
+  const origin = String(req.headers.origin ?? '');
+  const allowed = isSameOrigin(req) || allowedOrigins().includes(origin);
+
+  if (allowed) {
+    res.setHeader('Access-Control-Allow-Origin', origin || '*');
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Authorization,Content-Type');
+    res.setHeader('Access-Control-Expose-Headers', 'X-Session-Stale');
+    res.setHeader('Access-Control-Max-Age', '600');
+  }
+  return res.status(204).end();
+});
+
+/* Diagnostico publico: nao exige sessao (usado por monitores e pela UI). */
 app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
@@ -49,7 +120,6 @@ app.get('/api/health', (_req, res) => {
     time: new Date().toISOString(),
   });
 });
-
 
 app.use('/api/auth', authRouter());
 

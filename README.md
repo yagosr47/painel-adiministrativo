@@ -82,10 +82,31 @@ A sessao e mantida de duas formas, aceitas pelo servidor:
    aberto dentro de iframe/preview). Se a UI voltar para a tela de login, abra em
    uma aba propria.
 
+Os dois canais sao **alternativos, nao concorrentes**: se um estiver invalido
+(token de outro servidor, sessao revogada, cookie expirado), o outro ainda
+autentica. Quando o servidor rejeita um canal mas aceita o outro, responde com
+`X-Session-Stale: bearer|cookie` e o painel descarta o token morto — antes um
+token velho no navegador anulava o cookie bom e a visao geral pedia login.
+
+Outros detalhes do contrato:
+
+- `GET /api/auth/session` → `{ user, needsSetup, cookieAuth, sessionSource,
+  hasBearer, cookiePresent }`. `cookieAuth: false` com `cookiePresent: true`
+  significa "o cookie existe, mas a sessao veio pelo token" — nao e erro.
+- `GET /api/auth/revalidate` → revalida sem senha (`valid: true/false`).
+- Login tambem grava `panel_sid` (legivel pelo JS, **nao** e o token) apenas como
+  ponteiro de diagnostico; o token fica só no `localStorage`.
+- `OPTIONS` (preflight CORS) responde **204 sem exigir sessao**. Mesma origem e
+  qualquer porta do mesmo hostname (necessario no proxy do preview) sao aceitas;
+  outras origens so via `PANEL_ALLOWED_ORIGINS` (lista separada por virgula).
+- Se a API responder 401, o painel limpa o token e volta ao login com aviso,
+  em vez de mostrar "faca login" apenas em algumas telas.
+
 Sem `npm run seed` **nao existe usuario** e o login sempre falha. Para redefinir a
 senha do administrador, veja a secao de diagnostico abaixo.
 
-Variaveis de ambiente: `PORT`, `DATA_DIR` (padrao `data/`), `DB_PATH`.
+Variaveis de ambiente: `PORT`, `DATA_DIR` (padrao `data/`), `DB_PATH`,
+`PANEL_ALLOWED_ORIGINS`.
 
 ---
 
@@ -374,7 +395,7 @@ Autenticacao: cookie `panel_session` **ou** `Authorization: Bearer <token>`
 npm test
 ```
 
-88 testes, em cinco frentes:
+102 testes, em seis frentes:
 
 **`tests/isolation.test.js`** — sobe o app real com banco temporario e prova, via
 HTTP: autenticacao e permissoes por perfil; todos os segmentos com template
@@ -406,6 +427,12 @@ diferentes, desenho deterministico e SVG valido para as 100 imagens.
 um passa pelo normalizador sem perder secao/item, configs nao compartilham
 referencia, imagens de previa vem **somente** do proprio segmento e o config
 original nao e mutado.
+
+**`tests/session.test.js`** — regressao de "estou logado mas pede login": Bearer
+invalido nao anula cookie valido (e vice-versa), `X-Session-Stale` e reportado,
+token funciona sem cookie, `/api/auth/revalidate` responde sem senha, logout
+revoga os dois canais e o preflight CORS responde 204 (mesma origem e hostname do
+preview) sem cair no `requireAuth`.
 
 ---
 

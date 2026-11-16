@@ -3,6 +3,12 @@ import { newToken, verifyPassword } from './auth.js';
 
 const SESSION_DAYS = 14;
 export const SESSION_COOKIE = 'panel_session';
+/**
+ * Cookies com o id da sessao do bearer. O token em si NUNCA vai para cookie
+ * (fica so no localStorage); o que sai aqui e apenas um ponteiro para a linha de
+ * `sessions`, usado para manter a sessao sincronizada entre os dois canais.
+ */
+export const SESSION_ID_COOKIE = 'panel_sid';
 
 export function createSession(userId) {
   const token = newToken();
@@ -54,6 +60,39 @@ export function parseCookies(header = '') {
     out[key] = decodeURIComponent(part.slice(idx + 1).trim());
   }
   return out;
+}
+
+/**
+ * Escolhe a sessao valida entre as duas origens possiveis.
+ *
+ * `Authorization: Bearer` e o cookie `panel_session` sao caminhos alternativos,
+ * nao concorrentes: se um deles estiver invalido (token de outro servidor, cookie
+ * expirado, sessao revogada), o outro ainda vale. Antes, um token invalido fazia
+ * `req.user = null` mesmo com cookie bom, e o painel pedia login de novo.
+ */
+export function resolveSession({ bearer = '', cookie = '' } = {}) {
+  const bearerUser = bearer ? userFromToken(bearer) : null;
+  const cookieUser = cookie ? userFromToken(cookie) : null;
+
+  // Preferencia: o token (mais recente quando o cookie foi bloqueado no login).
+  const user = bearerUser ?? cookieUser;
+  const source = bearerUser ? 'bearer' : cookieUser ? 'cookie' : null;
+
+  return {
+    user,
+    token: source === 'bearer' ? bearer : source === 'cookie' ? cookie : null,
+    source,
+    // Canal apresentado e rejeitado. Reportado sempre — inclusive quando o outro
+    // canal autenticou — para o cliente limpar o token morto e nao reenviar lixo
+    // em toda requisicao.
+    staleBearer: Boolean(bearer) && !bearerUser,
+    staleCookie: Boolean(cookie) && !cookieUser,
+  };
+}
+
+/** Extrai o id da sessao (o proprio token) para o cookie ponteiro. */
+export function sessionIdFromToken(token) {
+  return token ? String(token).slice(0, 32) : null;
 }
 
 export function countUsers() {
