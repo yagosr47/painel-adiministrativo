@@ -162,6 +162,20 @@ export interface Template {
   config?: SiteConfig;
 }
 
+/** Ponto de partida pre-pronto que o servidor oferece para cada segmento. */
+export interface TemplatePreset {
+  segment_slug: string;
+  segment_name: string;
+  category: string;
+  accent: string;
+  sections: string[];
+  sections_count: number;
+  products_count: number;
+  categories_count: number;
+  density: string;
+  font_heading: string;
+}
+
 export interface SegmentCategory {
   id: string;
   segment_slug: string;

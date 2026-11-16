@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { api, tokenStore } from './lib/api';
+import { api, tokenStore, sessionEvents } from './lib/api';
 import type { User } from './types';
 import { useRoute, navigate } from './lib/router';
 import { LoginScreen } from './pages/LoginScreen';
@@ -25,7 +25,7 @@ export function App() {
 
   const checkSession = async () => {
     try {
-      const res = await api.get<{ user: User | null; needsSetup: boolean }>('/api/auth/session');
+      const res = await api.probe<{ user: User | null; needsSetup: boolean }>('/api/auth/session');
       setUser(res.user);
       setNeedsSetup(res.needsSetup);
     } catch {
@@ -39,9 +39,26 @@ export function App() {
     checkSession();
   }, []);
 
+  /**
+   * Sessao caiu no meio do uso (token revogado, servidor reiniciado, conta
+   * desativada): volta para o login imediatamente, em vez de deixar cada pagina
+   * mostrar "faca login" isoladamente.
+   */
+  useEffect(() => {
+    return sessionEvents.onUnauthorized(() => {
+      setUser((current) => {
+        if (current) toast.push('Sua sessao expirou. Entre novamente.', 'error');
+        return null;
+      });
+      setLoading(false);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const logout = async () => {
     await api.post('/api/auth/logout').catch(() => {});
     tokenStore.set(null);
+    document.cookie = 'panel_sid=; Max-Age=0; Path=/';
     setUser(null);
     navigate('');
   };

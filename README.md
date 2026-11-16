@@ -19,6 +19,8 @@ do site.
 - [Modelo de isolamento](#modelo-de-isolamento)
 - [Templates por segmento](#templates-por-segmento)
 - [Biblioteca de imagens](#biblioteca-de-imagens)
+  - [Modelos pre-prontos (pontos de partida)](#modelos-pre-prontos-pontos-de-partida)
+  - [Como as ilustracoes sao desenhadas](#como-as-ilustracoes-sao-desenhadas)
 - [Painel administrativo](#painel-administrativo)
 - [Permissoes e seguranca](#permissoes-e-seguranca)
 - [API](#api)
@@ -80,10 +82,31 @@ A sessao e mantida de duas formas, aceitas pelo servidor:
    aberto dentro de iframe/preview). Se a UI voltar para a tela de login, abra em
    uma aba propria.
 
+Os dois canais sao **alternativos, nao concorrentes**: se um estiver invalido
+(token de outro servidor, sessao revogada, cookie expirado), o outro ainda
+autentica. Quando o servidor rejeita um canal mas aceita o outro, responde com
+`X-Session-Stale: bearer|cookie` e o painel descarta o token morto — antes um
+token velho no navegador anulava o cookie bom e a visao geral pedia login.
+
+Outros detalhes do contrato:
+
+- `GET /api/auth/session` → `{ user, needsSetup, cookieAuth, sessionSource,
+  hasBearer, cookiePresent }`. `cookieAuth: false` com `cookiePresent: true`
+  significa "o cookie existe, mas a sessao veio pelo token" — nao e erro.
+- `GET /api/auth/revalidate` → revalida sem senha (`valid: true/false`).
+- Login tambem grava `panel_sid` (legivel pelo JS, **nao** e o token) apenas como
+  ponteiro de diagnostico; o token fica só no `localStorage`.
+- `OPTIONS` (preflight CORS) responde **204 sem exigir sessao**. Mesma origem e
+  qualquer porta do mesmo hostname (necessario no proxy do preview) sao aceitas;
+  outras origens so via `PANEL_ALLOWED_ORIGINS` (lista separada por virgula).
+- Se a API responder 401, o painel limpa o token e volta ao login com aviso,
+  em vez de mostrar "faca login" apenas em algumas telas.
+
 Sem `npm run seed` **nao existe usuario** e o login sempre falha. Para redefinir a
 senha do administrador, veja a secao de diagnostico abaixo.
 
-Variaveis de ambiente: `PORT`, `DATA_DIR` (padrao `data/`), `DB_PATH`.
+Variaveis de ambiente: `PORT`, `DATA_DIR` (padrao `data/`), `DB_PATH`,
+`PANEL_ALLOWED_ORIGINS`.
 
 ---
 
@@ -183,6 +206,29 @@ categorias. Nao sao variacoes de um mesmo layout.
 `catalog`, `gallery`, `team`, `testimonials`, `hours`, `contact`, `cta`, `faq`,
 `stats`, `steps`, `brands`, `menu-highlights`, `booking`.
 
+### Modelos pre-prontos (pontos de partida)
+
+Criar um template "em branco" nao precisa comecar do nada: **todo segmento tem um
+modelo pre-pronto** (`server/lib/presets.js`) com secoes na ordem que faz sentido,
+tema coerente, categorias e itens de exemplo.
+
+| Segmento | Secoes do modelo | Itens de exemplo |
+| --- | --- | --- |
+| Restaurantes | hero, destaques do cardapio, catalogo, sobre, galeria, horarios, depoimentos, contato (8) | 4 (pratos, bebidas, sobremesas) |
+| Barbearias | hero, diferenciais, servicos, equipe, galeria, depoimentos, horarios, agendamento, contato (9) | 4 (cortes, barba, combos, produtos) |
+| Oficinas | hero, diferenciais, servicos, como funciona, sobre, galeria, depoimentos, contato (8) | 4 (revisao, freio, oleo, alinhamento) |
+| Lojas | hero, colecao, sobre, galeria, diferenciais, depoimentos, contato (7) | 4 (vestido, camisa, calca, tenis) |
+| Mercados | hero, diferenciais, ofertas, horarios, galeria, sobre, contato (7) | 4 (cesta, pao, cafe, combo) |
+| Clinicas | hero, especialidades, sobre, equipe, como funciona, depoimentos, FAQ, agendamento, contato (9) | 4 (consulta, retorno, exame, procedimento) |
+| Portfolio | hero, sobre, projetos, galeria, processo, numeros, depoimentos, contato (8) | 3 (case, identidade, site) |
+
+No painel: **Templates e Biblioteca → Novo template → Ponto de partida**, com tres
+opcoes explicitas — usar o modelo do segmento, copiar de um template existente ou
+comecar em branco. Ao escolher o modelo, o template ja nasce com capa, galeria e
+imagens dos itens preenchidas com a biblioteca do proprio segmento
+(`POST /api/templates/:id/preview-images` aplica isso depois tambem, e a Biblioteca
+tem o botao **Aplicar em template**).
+
 Personalizacao disponivel por site: cores, logotipo, tipografia, imagens, textos,
 produtos e servicos, categorias, links, contatos, horarios, SEO, rodape, menu,
 secoes (adicionar, remover, reordenar, duplicar, desativar) e dados de negocio
@@ -199,9 +245,26 @@ ambientes), lojas (roupas, calcados, acessorios, vitrines), mercados
 (hortifruti, padaria, bebidas, mercearia), clinicas (consultorios, equipe,
 procedimentos, escritorio) e portfolio (projetos, equipe, escritorio, processo).
 
-Recursos: visualizar, buscar por titulo/tag, filtrar por categoria, enviar imagem
-propria, substituir arquivo, excluir, definir capa do segmento e definir
-capa/miniatura do site e do template.
+Recursos: visualizar, buscar por titulo/tag, filtrar por categoria, filtrar por
+licenca (ilustrativa / autorizada / propria) e por "so capas", enviar imagem
+propria, substituir arquivo, excluir, definir capa do segmento, definir
+capa/miniatura do site e do template, e **aplicar as imagens do segmento em um
+template** de uma vez.
+
+![Amostra da biblioteca de imagens](docs/biblioteca-ilustracoes.png)
+
+### Como as ilustracoes sao desenhadas
+
+`server/lib/imagery.js` traduz o titulo da imagem em um **assunto** (pizza,
+hamburguer, corte de cabelo, carro, vestido, fruta, dente, projeto grafico…) e
+desenha o objeto em SVG: massa, molho e coberturas na pizza; pao, carne, queijo e
+alface no hamburguer; rosto com degrade na barbearia; carroceria e rodas na
+oficina. Ambientes ("Salao do restaurante", "Vista da oficina", "Interior da
+barbearia") usam a cena do segmento — bar, garagem, barbearia — em vez de uma
+vitrine repetida. O desenho e deterministico (mesmo id, mesmo SVG), entao
+`npm run seed` pode ser reexecutado para atualizar bancos antigos: arquivos
+`library` + `illustrative` em SVG sao regravados, mas **nunca** uploads do cliente
+nem imagens ja substituidas.
 
 ### Sobre licenciamento (importante)
 
@@ -290,9 +353,11 @@ GET    /api/dashboard                            GET /api/activity
 
 GET    /api/segments
 GET    /api/templates?segment=&category=&status=&q=
+GET    /api/template-presets                     (modelos pre-prontos por segmento)
 GET    /api/templates/:id
 POST   /api/templates                            PATCH /api/templates/:id
 POST   /api/templates/:id/duplicate
+POST   /api/templates/:id/preview-images         (aplica imagens do segmento)
 DELETE /api/templates/:id?force=true             POST /api/templates/from-site/:siteId
 
 GET    /api/images?segment=&category=&q=&clientId=&scope=
@@ -330,7 +395,7 @@ Autenticacao: cookie `panel_session` **ou** `Authorization: Bearer <token>`
 npm test
 ```
 
-54 testes, em tres frentes:
+102 testes, em seis frentes:
 
 **`tests/isolation.test.js`** — sobe o app real com banco temporario e prova, via
 HTTP: autenticacao e permissoes por perfil; todos os segmentos com template
@@ -352,6 +417,22 @@ entradas invalidas e placeholders.
 templates e verifica HTML, secoes habilitadas/desativadas, tema aplicado, precos,
 marca de imagens ilustrativas, tolerancia a imagem ausente e **escape de HTML**
 (conteudo nao injeta `<script>`).
+
+**`tests/imagery.test.js`** — biblioteca de imagens: todo titulo do catalogo cai em
+um assunto conhecido (nenhum cai no generico), acentos e plurais nao quebram a
+classificacao, ambientes usam a cena do segmento, assuntos diferentes geram SVGs
+diferentes, desenho deterministico e SVG valido para as 100 imagens.
+
+**`tests/presets.test.js`** — modelos pre-prontos: os 7 segmentos tem modelo, cada
+um passa pelo normalizador sem perder secao/item, configs nao compartilham
+referencia, imagens de previa vem **somente** do proprio segmento e o config
+original nao e mutado.
+
+**`tests/session.test.js`** — regressao de "estou logado mas pede login": Bearer
+invalido nao anula cookie valido (e vice-versa), `X-Session-Stale` e reportado,
+token funciona sem cookie, `/api/auth/revalidate` responde sem senha, logout
+revoga os dois canais e o preflight CORS responde 204 (mesma origem e hostname do
+preview) sem cair no `requireAuth`.
 
 ---
 

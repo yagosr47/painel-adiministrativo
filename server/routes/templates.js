@@ -7,6 +7,7 @@ import { normalizeConfig, configStatus, slugify, collectImageIds, deepClone } fr
 import { logActivity } from '../lib/activity.js';
 import { requireRole } from './auth.js';
 import { imageUrl } from '../lib/storage.js';
+import { buildPresetConfig, attachPreviewImages, listPresets } from '../lib/presets.js';
 
 const now = () => new Date().toISOString();
 
@@ -98,6 +99,12 @@ export function templatesRouter() {
     res.json({ templates: rows.map(serialize) });
   });
 
+  /* ------------------------ Pontos de partida ---------------------------- */
+  router.get('/template-presets', (req, res) => {
+    const segments = all('SELECT slug, name FROM segments ORDER BY position');
+    res.json({ presets: listPresets(segments) });
+  });
+
   router.get('/templates/:id', (req, res) => {
     const row = get(
       `SELECT t.*, s.name AS segment_name,
@@ -122,7 +129,16 @@ export function templatesRouter() {
     const name = requireString(body.name, 'nome', { max: 120 });
     const segment = String(body.segment_slug ?? '');
     if (!get('SELECT slug FROM segments WHERE slug = ?', [segment])) throw badRequest('Segmento invalido');
-    const baseConfig = normalizeConfig(body.config ?? {}, name);
+
+    // Ordem de precedencia: config explicito > ponto de partida do segmento >
+    // config vazio. Sem isso, "novo template" nascia sem secoes nem catalogo.
+    let source = body.config;
+    if (!source && body.preset) {
+      const presetConfig = buildPresetConfig(segment, name);
+      if (!presetConfig) throw badRequest('Ponto de partida indisponivel para este segmento');
+      source = presetConfig;
+    }
+    const baseConfig = normalizeConfig(source ?? {}, name);
     const stats = configStatus(baseConfig);
     let slug = slugify(body.slug || name);
     if (get('SELECT id FROM templates WHERE slug = ?', [slug])) slug = `${slug}-${Date.now().toString(36).slice(-4)}`;
@@ -140,8 +156,8 @@ export function templatesRouter() {
         String(body.summary ?? '').slice(0, 300),
         String(body.description ?? '').slice(0, 2000),
         ['draft', 'published', 'archived'].includes(body.status) ? body.status : 'draft',
-        body.cover_image_id ?? null,
-        body.thumbnail_image_id ?? null,
+        body.cover_image_id ?? baseConfig.media?.coverImageId ?? null,
+        body.thumbnail_image_id ?? baseConfig.media?.thumbnailImageId ?? null,
         body.accent ?? baseConfig.theme.primary,
         JSON.stringify(baseConfig),
         stats.sections,
@@ -152,6 +168,43 @@ export function templatesRouter() {
     );
     logActivity(req.user, 'template.created', 'template', id, `Template "${name}" criado`);
     res.status(201).json({ template: serialize(get(`SELECT t.*, s.name AS segment_name FROM templates t JOIN segments s ON s.slug=t.segment_slug WHERE t.id = ?`, [id])) });
+  });
+
+  /**
+   * Preenche o template com imagens ilustrativas do proprio segmento.
+   * Serve para sair da previa cinza sem obrigar o usuario a escolher 12 imagens.
+   */
+  router.post('/templates/:id/preview-images', requireRole('admin', 'editor'), (req, res) => {
+    const row = get('SELECT * FROM templates WHERE id = ?', [req.params.id]);
+    if (!row) throw notFound('Template nao encontrado');
+    const config = parseJson(row.config, {});
+    const images = all(
+      `SELECT * FROM images
+        WHERE segment_slug = ? AND owner_client_id IS NULL
+        ORDER BY is_cover DESC, created_at ASC`,
+      [row.segment_slug],
+    );
+    if (!images.length) throw badRequest('Nenhuma imagem na biblioteca deste segmento');
+    const next = attachPreviewImages(config, images);
+    const stats = configStatus(next);
+    run(
+      `UPDATE templates SET config = ?, cover_image_id = ?, thumbnail_image_id = ?, sections_count = ?, version = version + 1, updated_at = ? WHERE id = ?`,
+      [
+        JSON.stringify(next),
+        next.media.coverImageId,
+        next.media.thumbnailImageId,
+        stats.sections,
+        now(),
+        row.id,
+      ],
+    );
+    logActivity(req.user, 'template.preview_images', 'template', row.id, `Imagens ilustrativas aplicadas em "${row.name}"`);
+    res.json({
+      template: serialize(
+        get(`SELECT t.*, s.name AS segment_name FROM templates t JOIN segments s ON s.slug=t.segment_slug WHERE t.id = ?`, [row.id]),
+      ),
+      applied: images.length,
+    });
   });
 
   router.patch('/templates/:id', requireRole('admin', 'editor'), (req, res) => {

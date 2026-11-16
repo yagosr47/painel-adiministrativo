@@ -24,11 +24,17 @@ export function LibraryPage() {
   const [deleting, setDeleting] = useState<ImageAsset | null>(null);
   const [replacing, setReplacing] = useState<ImageAsset | null>(null);
   const [generating, setGenerating] = useState(false);
+  const [license, setLicense] = useState('');
+  const [applyTarget, setApplyTarget] = useState<string | null>(null);
+  const [applyingTo, setApplyingTo] = useState(false);
+  const [onlyCover, setOnlyCover] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const fileRef = useRef<HTMLInputElement>(null);
   const toast = useToast();
 
   const segmentsData = useAsync<{ segments: Segment[] }>(() => api.get('/api/segments'), []);
+  const templatesData = useAsync<{ templates: any[] }>(() => api.get('/api/templates'), []);
+  const templates = (templatesData.data?.templates ?? []).filter((t) => t.segment_slug === segment);
   const segments = segmentsData.data?.segments ?? [];
 
   useEffect(() => {
@@ -42,11 +48,24 @@ export function LibraryPage() {
   );
 
   const images = useMemo(() => {
-    const list = data.data?.images ?? [];
+    let list = data.data?.images ?? [];
+    if (license) list = list.filter((i) => i.license === license);
+    if (onlyCover) list = list.filter((i) => i.is_cover);
     if (!search) return list;
     const needle = search.toLowerCase();
     return list.filter((i) => `${i.title} ${i.alt} ${i.tags.join(' ')} ${i.category_slug}`.toLowerCase().includes(needle));
-  }, [data.data, search]);
+  }, [data.data, search, license, onlyCover]);
+
+  // Contagem honesta do acervo: quantas sao ilustrativas, autorizadas e proprias.
+  const totals = useMemo(() => {
+    const list = data.data?.images ?? [];
+    return {
+      all: list.length,
+      illustrative: list.filter((i) => i.license === 'illustrative').length,
+      authorized: list.filter((i) => i.license === 'authorized').length,
+      own: list.filter((i) => i.license === 'own').length,
+    };
+  }, [data.data]);
 
   const categories = data.data?.categories ?? [];
 
@@ -98,6 +117,20 @@ export function LibraryPage() {
         return;
       }
       toast.push(error.message, 'error');
+    }
+  };
+
+  const applyToTemplate = async (templateId: string) => {
+    setApplyingTo(true);
+    try {
+      const res = await api.post<{ applied: number; template: any }>(`/api/templates/${templateId}/preview-images`, {});
+      toast.push(`${res.applied} imagens ilustrativas aplicadas em "${res.template.name}"`, 'success');
+      setApplyTarget(null);
+      templatesData.reload();
+    } catch (error: any) {
+      toast.push(error.message, 'error');
+    } finally {
+      setApplyingTo(false);
     }
   };
 
@@ -203,6 +236,14 @@ export function LibraryPage() {
               >
                 ✦ Gerar ilustracao
               </button>
+              <button
+                className="btn sm"
+                disabled={applyingTo || !templates.length}
+                onClick={() => setApplyTarget(templates[0].id)}
+                title="Copia capa, galeria e imagens de itens deste segmento para o template escolhido"
+              >
+                {applyingTo ? <span className="spin" /> : '▣'} Aplicar em template
+              </button>
               <button className="btn sm ghost" onClick={() => navigate('templates')}>
                 ← Templates
               </button>
@@ -213,8 +254,21 @@ export function LibraryPage() {
         <div>
           <div className="toolbar">
             <SearchInput value={search} onChange={setSearch} placeholder="Buscar por titulo, tag ou categoria…" />
+            <select className="select" style={{ width: 190 }} value={license} onChange={(e) => setLicense(e.target.value)}>
+              <option value="">Todas as licencas</option>
+              <option value="illustrative">Ilustrativas ({totals.illustrative})</option>
+              <option value="authorized">Autorizadas ({totals.authorized})</option>
+              <option value="own">Proprias do cliente ({totals.own})</option>
+            </select>
+            <button
+              className={`chip ${onlyCover ? 'active' : ''}`}
+              onClick={() => setOnlyCover((v) => !v)}
+              title="Mostrar somente as capas de categoria"
+            >
+              ★ So capas
+            </button>
             <div className="small muted" style={{ marginLeft: 'auto' }}>
-              {images.length} imagem(ns) — {segments.find((s) => s.slug === segment)?.name ?? ''}
+              {images.length} de {totals.all} — {segments.find((s) => s.slug === segment)?.name ?? ''}
             </div>
           </div>
 
@@ -305,6 +359,39 @@ export function LibraryPage() {
             }
           }}
         />
+      ) : null}
+
+      {applyTarget ? (
+        <Modal
+          title="Aplicar imagens ilustrativas"
+          subtitle={`Segmento ${segment}`}
+          onClose={() => setApplyTarget(null)}
+          footer={
+            <>
+              <button className="btn" onClick={() => setApplyTarget(null)}>
+                Cancelar
+              </button>
+              <button className="btn primary" disabled={applyingTo} onClick={() => applyToTemplate(applyTarget)}>
+                {applyingTo ? <span className="spin" /> : null} Aplicar imagens
+              </button>
+            </>
+          }
+        >
+          <p className="small muted">
+            Copia capa, miniatura, galeria, imagem do topo e imagens dos itens do segmento para o template
+            escolhido. As imagens continuam marcadas como <strong>ilustrativas</strong> e podem ser trocadas uma a
+            uma depois.
+          </p>
+          <Field label="Template que recebe as imagens">
+            <select className="select" value={applyTarget} onChange={(e) => setApplyTarget(e.target.value)}>
+              {templates.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </Modal>
       ) : null}
 
       {deleting ? (

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { api } from '../lib/api';
-import type { Segment, Template } from '../types';
+import type { Segment, Template, TemplatePreset } from '../types';
 import { Modal, Field, useToast } from './ui';
 
 export function TemplateCreateModal({
@@ -17,13 +17,21 @@ export function TemplateCreateModal({
   const [category, setCategory] = useState('');
   const [summary, setSummary] = useState('');
   const [source, setSource] = useState('');
+  const [preset, setPreset] = useState(true);
+  const [presets, setPresets] = useState<TemplatePreset[]>([]);
   const [loading, setLoading] = useState(false);
   const [templates, setTemplates] = useState<Template[]>([]);
   const toast = useToast();
 
   React.useEffect(() => {
     api.get<{ templates: Template[] }>('/api/templates').then((r) => setTemplates(r.templates)).catch(() => {});
+    api
+      .get<{ presets: TemplatePreset[] }>('/api/template-presets')
+      .then((r) => setPresets(r.presets))
+      .catch(() => {});
   }, []);
+
+  const currentPreset = presets.find((p) => p.segment_slug === segment);
 
   const submit = async () => {
     if (!name.trim()) {
@@ -43,10 +51,12 @@ export function TemplateCreateModal({
       const res = await api.post<{ template: Template }>('/api/templates', {
         name,
         segment_slug: segment,
-        category: category || 'geral',
+        category: category || currentPreset?.category || 'geral',
         summary,
         status: 'draft',
+        // config copiado de outro template vence o ponto de partida
         config,
+        preset: !config && preset,
       });
       toast.push('Template criado como rascunho', 'success');
       onCreated(res.template.id);
@@ -97,17 +107,73 @@ export function TemplateCreateModal({
       </Field>
       <Field
         label="Ponto de partida"
-        hint="Copiar a estrutura de outro template do mesmo segmento cria uma nova configuracao independente."
+        hint="O modelo pre-pronto ja vem com secoes, tema, categorias e itens de exemplo. Voce ajusta depois no editor."
       >
-        <select className="select" value={source} onChange={(e) => setSource(e.target.value)}>
-          <option value="">Comecar em branco</option>
-          {compatibleSources.map((t) => (
-            <option key={t.id} value={t.id}>
-              Copiar estrutura de: {t.name}
-            </option>
-          ))}
-        </select>
+        <div className="start-options">
+          <label className={`start-option ${preset && !source ? 'active' : ''}`}>
+            <input
+              type="radio"
+              checked={preset && !source}
+              onChange={() => {
+                setPreset(true);
+                setSource('');
+              }}
+            />
+            <span>
+              <strong>Modelo pre-pronto de {currentPreset?.segment_name ?? segment}</strong>
+              <span className="small muted">
+                {currentPreset
+                  ? `${currentPreset.sections_count} secoes · ${currentPreset.products_count} itens · ${currentPreset.categories_count} categorias`
+                  : 'carregando estrutura…'}
+              </span>
+            </span>
+          </label>
+
+          {compatibleSources.length ? (
+            <label className={`start-option ${source ? 'active' : ''}`}>
+              <input
+                type="radio"
+                checked={Boolean(source)}
+                onChange={() => {
+                  setPreset(false);
+                  setSource(compatibleSources[0].id);
+                }}
+              />
+              <span>
+                <strong>Copiar de um template existente</strong>
+                <span className="small muted">Cria uma copia independente da configuracao</span>
+              </span>
+            </label>
+          ) : null}
+
+          <label className={`start-option ${!preset && !source ? 'active' : ''}`}>
+            <input
+              type="radio"
+              checked={!preset && !source}
+              onChange={() => {
+                setPreset(false);
+                setSource('');
+              }}
+            />
+            <span>
+              <strong>Comecar em branco</strong>
+              <span className="small muted">Somente o essencial; monte tudo no editor</span>
+            </span>
+          </label>
+        </div>
       </Field>
+
+      {source ? (
+        <Field label="Template de origem">
+          <select className="select" value={source} onChange={(e) => setSource(e.target.value)}>
+            {compatibleSources.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+      ) : null}
       <div className="banner info">
         Templates sao <strong>modelos</strong>. Sites de clientes guardam copia propria — editar este template
         depois nao altera nenhum site existente.

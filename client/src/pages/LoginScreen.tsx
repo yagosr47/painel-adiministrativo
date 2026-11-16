@@ -20,11 +20,13 @@ export function LoginScreen({ onLogin, needsSetup }: { onLogin: (user: User) => 
       // guarda o token como alternativa ao cookie httpOnly: cobre navegadores
       // que bloqueiam cookies de terceiros dentro do preview/iframe.
       if (res.token) tokenStore.set(res.token);
-      // Confirma se o cookie realmente ficou gravado; so entao avisamos o usuario.
+      // Confirma o estado real da sessao: se o servidor reconheceu pelo cookie,
+      // nao ha nada a avisar. `cookiePresent` diz se o navegador guardou o
+      // cookie; `sessionSource` diz por qual canal a sessao foi aceita.
       const check = await api
-        .get<{ cookieAuth?: boolean }>('/api/auth/session')
+        .probe<{ cookieAuth?: boolean; cookiePresent?: boolean; sessionSource?: string }>('/api/auth/session')
         .catch(() => null);
-      setCookiesBlocked(check ? check.cookieAuth === false : false);
+      setCookiesBlocked(Boolean(check && check.cookieAuth === false && check.cookiePresent === false));
       onLogin(res.user);
     } catch (err: any) {
       setIssue(classifyLoginError(err));
