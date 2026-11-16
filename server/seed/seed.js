@@ -50,8 +50,14 @@ function insertLibraryImages(userId) {
   }
 
   for (const record of records) {
-    const exists = get('SELECT id FROM images WHERE id = ?', [record.id]);
-    if (exists) continue;
+    const exists = get('SELECT id, source, owner_client_id, license, file_ext FROM images WHERE id = ?', [record.id]);
+
+    // Imagem de biblioteca ja existente: reescreve o arquivo demonstrativo com o
+    // gerador atual. Isso mantem bancos antigos atualizados quando o desenho
+    // melhora. Nunca toca em uploads do cliente nem em imagens substituidas.
+    const isLibraryDefault =
+      exists && exists.source === 'library' && !exists.owner_client_id && exists.license === 'illustrative' && exists.file_ext === 'svg';
+    if (exists && !isLibraryDefault) continue;
 
     if (!catalogCats.get(record.segment_slug)?.has(record.category_slug)) {
       run(
@@ -73,6 +79,11 @@ function insertLibraryImages(userId) {
     const dir = path.join(MEDIA_DIR, 'library', record.segment_slug);
     mkdirSync(dir, { recursive: true });
     writeFileSync(path.join(dir, `${record.id}.svg`), svg, 'utf8');
+
+    if (exists) {
+      run('UPDATE images SET file_size = ?, updated_at = ? WHERE id = ?', [Buffer.byteLength(svg), now(), record.id]);
+      continue;
+    }
 
     run(
       `INSERT INTO images (id, segment_slug, category_slug, title, alt, tags, width, height, source,
